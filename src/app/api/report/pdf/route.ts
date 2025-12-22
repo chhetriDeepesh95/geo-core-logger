@@ -16,7 +16,7 @@ async function launchBrowser() {
     // Vercel/serverless: puppeteer-core + @sparticuz/chromium-min
     const [{ default: puppeteer }, { default: chromium }] = await Promise.all([
       import("puppeteer-core"),
-      import("@sparticuz/chromium-min"),
+      import("@sparticuz/chromium"),
     ]);
 
     const executablePath = await chromium.executablePath();
