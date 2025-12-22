@@ -13,7 +13,6 @@ function isVercel(): boolean {
 
 async function launchBrowser() {
   if (isVercel()) {
-    // Vercel/serverless: puppeteer-core + @sparticuz/chromium-min
     const [{ default: puppeteer }, { default: chromium }] = await Promise.all([
       import("puppeteer-core"),
       import("@sparticuz/chromium"),
@@ -21,15 +20,13 @@ async function launchBrowser() {
 
     const executablePath = await chromium.executablePath();
 
-    const browser = await puppeteer.launch({
+    return puppeteer.launch({
       args: chromium.args,
       executablePath,
+      headless: true,
     });
-
-    return browser;
   }
 
-  // Local: puppeteer (bundled Chromium)
   const { default: puppeteer } = await import("puppeteer");
   return puppeteer.launch({ headless: true });
 }
