@@ -23,9 +23,7 @@ async function launchBrowser() {
 
     const browser = await puppeteer.launch({
       args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
       executablePath,
-      headless: chromium.headless,
     });
 
     return browser;
@@ -52,7 +50,7 @@ export async function POST(req: Request) {
     browser = await launchBrowser();
     const page = await browser.newPage();
 
-    const html = buildReportHtml(project, theme);
+    const html = buildReportHtml(project, theme as any);
 
     await page.setContent(html, { waitUntil: "networkidle0" });
 
