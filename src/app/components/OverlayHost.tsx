@@ -8,7 +8,7 @@ import type { ThemeTokens } from "../lib/theme";
 import { DrillholesWorkspace } from "./DrillholesWorkspace";
 import { LoggingWorkspace } from "./LoggingWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
-
+import { DataWorkspace } from "./DataWorkspace";
 
 export function OverlayHost({
   state,
@@ -33,6 +33,8 @@ export function OverlayHost({
         return <LoggingWorkspace state={state} setState={setState} tokens={tokens} />;
       case "settings":
         return <SettingsWorkspace state={state} setState={setState} tokens={tokens} />;
+      case "data":
+        return <DataWorkspace state={state} setState={setState} tokens={tokens} />;
       default:
         return (
           <div style={{ padding: 14 }}>
@@ -44,45 +46,25 @@ export function OverlayHost({
     }
   }
 
-  // theme-aware scrim
-  const scrim = tokens.isDark
-    ? "rgba(0,0,0,0.62)"
-    : "rgba(10,18,35,0.40)";
-
   return (
-    <div style={{ position: "absolute", inset: 0, pointerEvents: "auto" }}>
-      {/* scrim — clicking it closes overlay (same as Esc) */}
-      <div
-        onMouseDown={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          closeOverlay();
-        }}
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: scrim,
-        }}
-      />
-
-      {/* overlay card */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          padding: 14,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        zIndex: 999,
+      }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) closeOverlay();
+      }}
+    >
+      <div style={{ width: "min(1100px, 100%)", height: "min(820px, calc(100vh - 80px))", minHeight: 0 }}>
         <Card
-          onMouseDown={(e) => {
-            // prevent scrim close when clicking inside
-            e.stopPropagation();
-          }}
           style={{
-            width: "min(1400px, calc(100vw - 40px))",
+            width: "100%",
             height: "min(820px, calc(100vh - 80px))",
             background: tokens.panelBg,
             border: `1px solid ${tokens.panelBorder}`,
@@ -91,9 +73,7 @@ export function OverlayHost({
             minHeight: 0,
             display: "flex",
             flexDirection: "column",
-            boxShadow: tokens.isDark
-              ? "0 18px 70px rgba(0,0,0,0.55)"
-              : "0 18px 70px rgba(0,0,0,0.18)",
+            boxShadow: tokens.isDark ? "0 18px 70px rgba(0,0,0,0.55)" : "0 18px 70px rgba(0,0,0,0.18)",
           }}
         >
           {/* Header */}
@@ -120,9 +100,7 @@ export function OverlayHost({
           </div>
 
           {/* Body */}
-          <div style={{ padding: 14, height: "100%", minHeight: 0, overflow: "hidden" }}>
-            {renderBody()}
-          </div>
+          <div style={{ padding: 14, height: "100%", minHeight: 0, overflow: "hidden" }}>{renderBody()}</div>
         </Card>
       </div>
     </div>

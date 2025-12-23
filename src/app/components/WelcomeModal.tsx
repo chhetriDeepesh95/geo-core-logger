@@ -227,12 +227,6 @@ export function WelcomeModal(props: Props) {
               </Flex>
             </Card>
           ) : null}
-
-          <Flex justify="end" style={{ marginTop: 6 }}>
-            <Text size="2" color="gray">
-              “Open JSON” validates the file against the ProjectFile schema before loading.
-            </Text>
-          </Flex>
         </Flex>
       </Card>
     </div>

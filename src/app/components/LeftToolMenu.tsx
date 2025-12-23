@@ -1,15 +1,7 @@
 "use client";
 
 import React from "react";
-import {
-  TargetIcon,
-  FileTextIcon,
-  LayersIcon,
-  GearIcon,
-  MagnifyingGlassIcon,
-  ReaderIcon,
-  RulerSquareIcon,
-} from "@radix-ui/react-icons";
+import { TargetIcon, ReaderIcon, GearIcon, Pencil2Icon } from "@radix-ui/react-icons";
 import { IconButton } from "@radix-ui/themes";
 import type { AppState } from "../lib/appState";
 import type { ThemeTokens } from "../lib/theme";
@@ -18,11 +10,8 @@ type Tool = NonNullable<AppState["activeTool"]>;
 
 const tools: Array<{ id: Tool; title: string; icon: React.ReactNode }> = [
   { id: "drillholes", title: "Drillholes", icon: <TargetIcon /> },
-  { id: "logging", title: "Logging", icon: <FileTextIcon /> },
-  // { id: "section", title: "Section", icon: <LayersIcon /> },
-  // { id: "view", title: "View", icon: <RulerSquareIcon /> },
-  // { id: "data", title: "Data", icon: <ReaderIcon /> },
-  // { id: "qa", title: "QA", icon: <MagnifyingGlassIcon /> },
+  { id: "logging", title: "Logging", icon: <Pencil2Icon /> },
+  { id: "data", title: "Data", icon: <ReaderIcon /> },
   { id: "settings", title: "Settings", icon: <GearIcon /> },
 ];
 
@@ -39,9 +28,8 @@ export function LeftToolMenu({
     <div
       style={{
         position: "absolute",
-        top: 70,
         left: 12,
-        // width: 52,
+        top: 86,
         padding: 8,
         borderRadius: 12,
         background: tokens.panelBg,

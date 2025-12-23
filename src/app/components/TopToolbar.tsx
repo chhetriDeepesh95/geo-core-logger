@@ -4,6 +4,8 @@ import React from "react";
 import { Button, Text } from "@radix-ui/themes";
 import type { AppState } from "../lib/appState";
 import type { ThemeTokens } from "../lib/theme";
+import { SunIcon, MoonIcon } from "@radix-ui/react-icons";
+import { CubeIcon, GridIcon } from "@radix-ui/react-icons";
 
 export function TopToolbar({
   state,
@@ -37,7 +39,6 @@ export function TopToolbar({
           {state.project.project.name}
         </Text>
         <Text size="2" style={{ color: tokens.mutedText }}>
-          {state.mode === "workspace3d" ? "3D Workspace" : "Section Workspace"} ·{" "}
           {state.view === "view3d" ? "3D View" : "2D Plan"}
         </Text>
       </div>
@@ -45,17 +46,51 @@ export function TopToolbar({
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <Button
           variant="soft"
-          onClick={() => setState((s) => ({ ...s, theme: s.theme === "dark" ? "light" : "dark" }))}
-        >
-          Theme
-        </Button>
+            onClick={() =>
+              setState((s) => ({ ...s, theme: s.theme === "dark" ? "light" : "dark" }))
+            }
+          >
+            {state.theme === "dark" ? (
+              <>
+                <SunIcon />
+                Light mode
+              </>
+            ) : (
+              <>
+                <MoonIcon />
+                Dark mode
+              </>
+            )}
+          </Button>
 
-        <Button
+          <Button
+            variant="soft"
+            onClick={() =>
+              setState((s) => ({
+                ...s,
+                view: s.view === "view3d" ? "plan2d" : "view3d",
+              }))
+            }
+          >
+          {state.view === "view3d" ? (
+              <>
+                <GridIcon />
+                2D
+              </>
+            ) : (
+              <>
+                <CubeIcon />
+                3D
+            </>
+            )}
+          </Button>
+
+        {/* <Button
           variant="soft"
           onClick={() => setState((s) => ({ ...s, mode: s.mode === "workspace3d" ? "section" : "workspace3d" }))}
         >
           Mode
-        </Button>
+        </Button> */}
       </div>
     </div>
   );

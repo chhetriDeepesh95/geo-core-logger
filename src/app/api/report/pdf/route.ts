@@ -81,7 +81,7 @@ async function launchBrowser() {
 }
 
 export async function POST(req: Request) {
-  let browser: any | null = null;
+  let browser: any = null;
 
   try {
     const { project, theme } = (await req.json()) as {
