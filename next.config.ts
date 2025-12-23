@@ -1,7 +1,8 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  // ensures these packages are available in the server runtime bundle (including chromium bin assets)
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+// v15 made this property stable
   serverExternalPackages: ["puppeteer-core", "@sparticuz/chromium"],
 };
 
-module.exports = nextConfig;
+export default nextConfig;
