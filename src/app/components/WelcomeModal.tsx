@@ -145,6 +145,9 @@ export function WelcomeModal(props: Props) {
           <Text size="3" color="gray">
             {subtitle}
           </Text>
+          <Text>
+            By Deepesh Chhetri
+          </Text>
 
           <Flex gap="3" wrap="wrap" style={{ marginTop: 12 }}>
             {canContinue ? (
