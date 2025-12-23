@@ -29,6 +29,7 @@ export function saveToLocalStorage(state: AppState): void {
       scene: state.scene,
       activeTool: state.activeTool,
       linkedFileName: state.linkedFileName,
+      showWelcome: state.showWelcome,
     };
     localStorage.setItem(LS_KEY, JSON.stringify(snapshot));
   } catch {

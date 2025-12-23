@@ -6,13 +6,13 @@ import { Theme } from "@radix-ui/themes";
 import type { AppState } from "../lib/appState";
 import { getThemeTokens } from "../lib/theme";
 import { loadFromLocalStorage, saveToLocalStorage } from "../lib/persistence";
-
 import type { ProjectFile } from "../lib/model";
 
 import { SceneViewport } from "./SceneViewport";
 import { LeftToolMenu } from "./LeftToolMenu";
 import { TopToolbar } from "./TopToolbar";
 import { OverlayHost } from "./OverlayHost";
+import { WelcomeModal } from "./WelcomeModal";
 
 function makeDefaultProject(): ProjectFile {
   return {
@@ -47,18 +47,47 @@ function makeDefaultState(): AppState {
     scene: { showGrid: true, showTerrain: true },
     activeTool: null,
     linkedFileName: null,
-    
+
+    // deterministic initial render on both server and client
+    showWelcome: true,
   };
 }
 
 export function AppRoot() {
+  // IMPORTANT: do not read localStorage here; keep the initial render deterministic
   const [state, setState] = useState<AppState>(() => makeDefaultState());
 
+  // whether the welcome should show "Continue"
+  const [canContinue, setCanContinue] = useState<boolean>(false);
+
+  // after mount, restore local state and enable Continue if a project exists
   useEffect(() => {
     const restored = loadFromLocalStorage();
-    if (restored?.project) setState((prev) => ({ ...prev, ...restored }));
+
+    if (restored?.project) {
+      setState((prev) => ({
+        ...prev,
+        ...restored,
+
+        // always show welcome when an existing file is present, so user can choose Continue/New/Open/Demo
+        showWelcome: true,
+
+        // ensure these objects exist even if old snapshots are missing them
+        selection: restored.selection ?? prev.selection,
+        scene: restored.scene ?? prev.scene,
+        section: restored.section ?? prev.section,
+        camera3d: restored.camera3d ?? prev.camera3d,
+        camera2d: restored.camera2d ?? prev.camera2d,
+      }));
+      setCanContinue(true);
+    } else {
+      // no stored project; welcome remains, but no Continue option
+      setCanContinue(false);
+      setState((prev) => ({ ...prev, showWelcome: true }));
+    }
   }, []);
 
+  // persist state (best-effort)
   useEffect(() => {
     saveToLocalStorage(state);
   }, [state]);
@@ -75,21 +104,9 @@ export function AppRoot() {
         return;
       }
 
-      if (isMod && (e.key === "s" || e.key === "S")) {
-        e.preventDefault();
-        // save handled later in Data workspace
-        return;
-      }
-
       if (isMod && (e.key === "o" || e.key === "O")) {
         e.preventDefault();
         setState((s) => ({ ...s, activeTool: "data" }));
-        return;
-      }
-
-      if (isMod && (e.key === "f" || e.key === "F")) {
-        e.preventDefault();
-        setState((s) => ({ ...s, activeTool: s.activeTool ?? "drillholes" }));
         return;
       }
 
@@ -107,28 +124,16 @@ export function AppRoot() {
         setState((s) => ({ ...s, view: s.view === "view3d" ? "plan2d" : "view3d" }));
         return;
       }
-
-      if (e.key === "[" || e.key === "]") {
-        setState((s) => {
-          const holes = s.project.drillholes;
-          if (holes.length === 0) return s;
-
-          const current = s.selection.drillholeId;
-          const idx = holes.findIndex((h) => h.id === current);
-
-          const nextIdx =
-            e.key === "]"
-              ? (idx + 1 + holes.length) % holes.length
-              : (idx - 1 + holes.length) % holes.length;
-
-          return { ...s, selection: { drillholeId: holes[nextIdx].id, intervalId: null } };
-        });
-      }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  // if user closes welcome (Continue/New/Open/Demo all close it), disable Continue for future
+  useEffect(() => {
+    if (!state.showWelcome) setCanContinue(false);
+  }, [state.showWelcome]);
 
   return (
     <Theme appearance={radixAppearance} accentColor="blue" radius="medium">
@@ -138,7 +143,6 @@ export function AppRoot() {
           width: "100vw",
           height: "100vh",
           background: radixAppearance === "dark" ? "#070b16" : "#f6f7fb",
-          // transition: "background 180ms ease",
           overflow: "hidden",
           color: tokens.text,
         }}
@@ -147,6 +151,8 @@ export function AppRoot() {
         <TopToolbar state={state} setState={setState} tokens={tokens} />
         <LeftToolMenu state={state} setState={setState} tokens={tokens} />
         <OverlayHost state={state} setState={setState} tokens={tokens} />
+
+        <WelcomeModal state={state} setState={setState} canContinue={canContinue} />
       </div>
     </Theme>
   );

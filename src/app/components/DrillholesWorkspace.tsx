@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Dialog, Flex, Text, TextField } from "@radix-ui/themes";
 import type { AppState } from "../lib/appState";
 import type { Drillhole, Vec3 } from "../lib/model";
@@ -78,6 +78,9 @@ export function DrillholesWorkspace({
   const [draft, setDraft] = useState(() => makeEmptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
 
+  // store selection before entering "create" so we can restore on cancel
+  const prevSelectedIdRef = useRef<string | null>(null);
+
   // selection
   const selected = useMemo(() => {
     const id = state.selection.drillholeId;
@@ -95,6 +98,24 @@ export function DrillholesWorkspace({
 
     return sortDrillholes(base, sortKey, sortDir);
   }, [state.project.drillholes, query, sortKey, sortDir]);
+
+  // keep the right-side panel consistent with global selection after reload / external state restore
+  useEffect(() => {
+    // do not auto-switch modes while editing/creating
+    if (mode === "edit" || mode === "create") return;
+
+    const id = state.selection.drillholeId;
+    const exists = id ? state.project.drillholes.some((d) => d.id === id) : false;
+
+    if (exists && mode === "empty") {
+      setMode("view");
+      return;
+    }
+    if (!exists && mode === "view") {
+      setMode("empty");
+      return;
+    }
+  }, [mode, state.selection.drillholeId, state.project.drillholes]);
 
   function setDraftField(k: keyof typeof draft, v: string) {
     setDraft((d) => ({ ...d, [k]: v }));
@@ -141,6 +162,9 @@ export function DrillholesWorkspace({
 
   // left list click -> sets global selection and opens VIEW mode automatically
   function onPickHole(id: string) {
+    // entering view should clear any "create restore" memory
+    prevSelectedIdRef.current = null;
+
     setState((s) => ({ ...s, selection: { drillholeId: id, intervalId: null } }));
     setActionView();
   }
@@ -157,11 +181,37 @@ export function DrillholesWorkspace({
   }
 
   function setActionCreate() {
+    // store current selection and clear it so nothing remains highlighted during create
+    prevSelectedIdRef.current = state.selection.drillholeId;
+
+    setState((s) => ({
+      ...s,
+      selection: { drillholeId: null, intervalId: null },
+    }));
+
     setDraft(makeEmptyDraft());
     // sensible defaults (engineering)
     setDraft((d) => ({ ...d, depth: "50", x: "0", y: "0", z: "0" }));
     setFormError(null);
     setMode("create");
+  }
+
+  function cancelCreate() {
+    const restoreId = prevSelectedIdRef.current;
+    prevSelectedIdRef.current = null;
+
+    if (restoreId && state.project.drillholes.some((d) => d.id === restoreId)) {
+      setState((s) => ({
+        ...s,
+        selection: { drillholeId: restoreId, intervalId: null },
+      }));
+      setMode("view");
+      setFormError(null);
+      return;
+    }
+
+    setMode("empty");
+    setFormError(null);
   }
 
   function applyCreate() {
@@ -170,6 +220,8 @@ export function DrillholesWorkspace({
       setFormError(res.error);
       return;
     }
+
+    prevSelectedIdRef.current = null;
 
     setState((s) => ({
       ...s,
@@ -403,7 +455,7 @@ export function DrillholesWorkspace({
                   >
                     Random ID
                   </Button>
-                  <Button variant="soft" onClick={() => setMode(selected ? "view" : "empty")}>
+                  <Button variant="soft" onClick={cancelCreate}>
                     Cancel
                   </Button>
                 </>

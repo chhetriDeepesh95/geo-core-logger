@@ -843,7 +843,7 @@ export function LoggingWorkspace({
                             RQD
                           </text>
 
-                          {[0, 25, 50, 75, 100].map((v) => {
+                          {[0, 50, 100].map((v) => {
                             const x = strip.rqdX + (v / 100) * strip.rqdW;
                             const anchor = v === 0 ? "start" : v === 100 ? "end" : "middle";
                             const tx = v === 0 ? strip.rqdX + 2 : v === 100 ? strip.rqdX + strip.rqdW - 2 : x;

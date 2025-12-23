@@ -52,4 +52,7 @@ export type AppState = {
     | "export";
 
   linkedFileName: string | null;
+
+  // show welcome/start menu overlay
+  showWelcome: boolean;
 };
