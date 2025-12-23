@@ -7,8 +7,50 @@ export const runtime = "nodejs";
 type ThemeMode = "light" | "dark";
 
 function isVercel(): boolean {
-  // Vercel sets VERCEL="1" in deployments.
   return process.env.VERCEL === "1" || process.env.VERCEL === "true";
+}
+
+// optional: detect common container environments
+function isContainer(): boolean {
+  return (
+    process.env.DOCKER === "true" ||
+    process.env.CI === "true" ||
+    process.env.CONTAINER === "true"
+  );
+}
+
+// In Ubuntu 23.10+ / hardened Linux, Chromium sandbox may not be usable.
+// This adds flags only where needed.
+function localChromiumArgs(): string[] {
+  const base = [
+    "--disable-dev-shm-usage", // helps in constrained /tmp or docker environments
+    "--font-render-hinting=none",
+  ];
+
+  // Use no-sandbox only when you must. Prefer enabling userns sandbox on the OS.
+  // However, in container/CI it's often required.
+  if (process.platform === "linux" && isContainer()) {
+    return [...base, "--no-sandbox", "--disable-setuid-sandbox"];
+  }
+
+  // On many desktops with AppArmor userns restrictions, Puppeteer Chromium fails unless sandbox is disabled.
+  // If you want a strict approach, gate this behind an env var (see below).
+  if (process.platform === "linux" && process.env.PUPPETEER_NO_SANDBOX === "1") {
+    return [...base, "--no-sandbox", "--disable-setuid-sandbox"];
+  }
+
+  return base;
+}
+
+// Optional: allow specifying an existing Chrome/Chromium binary.
+// This avoids Puppeteer's downloaded Chromium and can reduce sandbox issues.
+function resolveExecutablePath(): string | undefined {
+  return (
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    process.env.CHROME_BIN ||
+    process.env.CHROMIUM_BIN ||
+    undefined
+  );
 }
 
 async function launchBrowser() {
@@ -28,7 +70,14 @@ async function launchBrowser() {
   }
 
   const { default: puppeteer } = await import("puppeteer");
-  return puppeteer.launch({ headless: true });
+
+  const executablePath = resolveExecutablePath();
+
+  return puppeteer.launch({
+    headless: true,
+    ...(executablePath ? { executablePath } : {}),
+    args: localChromiumArgs(),
+  });
 }
 
 export async function POST(req: Request) {
@@ -50,19 +99,12 @@ export async function POST(req: Request) {
     const html = buildReportHtml(project, theme as any);
 
     await page.setContent(html, { waitUntil: "networkidle0" });
-
-    // Helps with consistent typography if you load fonts in the HTML
     await page.evaluate(() => (document as any).fonts?.ready);
 
     const pdf = await page.pdf({
       format: "A4",
       printBackground: true,
-      margin: {
-        top: "20mm",
-        bottom: "20mm",
-        left: "18mm",
-        right: "18mm",
-      },
+      margin: { top: "20mm", bottom: "20mm", left: "18mm", right: "18mm" },
     });
 
     await browser.close();
