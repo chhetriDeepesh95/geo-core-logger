@@ -38,7 +38,11 @@ function cloneState(pos: THREE.Vector3, tgt: THREE.Vector3, zoom?: number): Came
   return { position: pos.clone(), target: tgt.clone(), zoom };
 }
 
-function applyState(cam: THREE.PerspectiveCamera | THREE.OrthographicCamera, controls: OrbitControls, st: CameraState) {
+function applyState(
+  cam: THREE.PerspectiveCamera | THREE.OrthographicCamera,
+  controls: OrbitControls,
+  st: CameraState
+) {
   cam.position.copy(st.position);
   controls.target.copy(st.target);
 
@@ -50,6 +54,65 @@ function applyState(cam: THREE.PerspectiveCamera | THREE.OrthographicCamera, con
   controls.update();
 }
 
+function degToRad(d: number) {
+  return (d * Math.PI) / 180;
+}
+
+function normalizeAzimuthDeg(a: number): number {
+  // normalize to [0, 360)
+  const r = ((a % 360) + 360) % 360;
+  return Math.abs(r) < 1e-12 ? 0 : r;
+}
+
+function clampInclinationDownDeg(incRaw: number): number {
+  // down-only convention: [-90, 0]
+  return Math.max(-90, Math.min(0, incRaw));
+}
+
+function fmt(n: number) {
+  return String(Math.round(n * 1000) / 1000);
+}
+
+function fmtDeg(n: number) {
+  return `${fmt(n)}°`;
+}
+
+/**
+ * Returns a unit vector pointing "downhole" from the collar.
+ *
+ * CONVENTION:
+ * - Y is up (scene uses Y-up).
+ * - X is East, Z is North (plan view is X/Z plane).
+ * - azimuth is clockwise from North (+Z), degrees [0..360).
+ * - inclination is down-only, degrees in [-90..0]:
+ *    0    = horizontal
+ *    -90  = vertical down (-Y)
+ *
+ * Always ensures y <= 0.
+ */
+function drillDirFromAzInc(h: Drillhole): THREE.Vector3 {
+  const azRaw = typeof h.azimuth === "number" && Number.isFinite(h.azimuth) ? h.azimuth : 0;
+  const az = normalizeAzimuthDeg(azRaw);
+
+  const incRaw =
+    typeof h.inclination === "number" && Number.isFinite(h.inclination) ? h.inclination : -90;
+
+  const inc = clampInclinationDownDeg(incRaw);
+
+  const azR = degToRad(az);
+
+  // inc is negative: -90..0
+  const hMag = Math.cos(degToRad(-inc));
+
+  const x = hMag * Math.sin(azR); // east
+  const z = hMag * Math.cos(azR); // north
+  const y = -Math.sin(degToRad(-inc)); // down is negative Y
+
+  const v = new THREE.Vector3(x, y, z);
+  if (v.lengthSq() < 1e-12) return new THREE.Vector3(0, -1, 0);
+  return v.normalize();
+}
+
 function computeDrillholeBounds(drillholes: Drillhole[]): THREE.Box3 | null {
   if (drillholes.length === 0) return null;
 
@@ -57,10 +120,11 @@ function computeDrillholeBounds(drillholes: Drillhole[]): THREE.Box3 | null {
   let any = false;
 
   for (const h of drillholes) {
-    // Y-up convention in your mesh placement:
-    // collar at (x,y,z), hole extends down in -Y to y - depth
+    const depth = Math.max(0, h.depth);
+
     const top = new THREE.Vector3(h.collar.x, h.collar.y, h.collar.z);
-    const bot = new THREE.Vector3(h.collar.x, h.collar.y - Math.max(0, h.depth), h.collar.z);
+    const dir = drillDirFromAzInc(h);
+    const bot = top.clone().add(dir.multiplyScalar(depth));
 
     box.expandByPoint(top);
     box.expandByPoint(bot);
@@ -108,7 +172,6 @@ function fitOrthoToBounds(
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
 
-  const spanX = Math.max(10, size.x);
   const spanZ = Math.max(10, size.z);
 
   const padding = 1.25;
@@ -137,9 +200,36 @@ function fitOrthoToBounds(
   controls.update();
 }
 
-export function SceneCanvas(props: Props) {
-  const { project, view, selectedId, onSelect, tokens, showGrid, showTerrain } = props;
+function pickIdFromObject(obj: THREE.Object3D | null): string | null {
+  let o: THREE.Object3D | null = obj;
+  while (o) {
+    if (o.userData && o.userData.id) return String(o.userData.id);
+    o = o.parent;
+  }
+  return null;
+}
 
+export function SceneCanvas(props: Props) {
+  const { project, view, setView, selectedId, onSelect, tokens, showGrid, showTerrain } = props;
+
+  // refs for stable key handlers (avoid remounting renderer effect)
+  const projectRef = useRef<ProjectFile>(project);
+  const selectedIdRef = useRef<string | null>(selectedId);
+  const setViewRef = useRef<(v: ViewType) => void>(setView);
+
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    setViewRef.current = setView;
+  }, [setView]);
+
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
 
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -168,15 +258,61 @@ export function SceneCanvas(props: Props) {
 
   const orthoHalfHRef = useRef<number>(60);
 
+  // overlays
+  const axesHostRef = useRef<HTMLDivElement | null>(null);
+  const hoverDivRef = useRef<HTMLDivElement | null>(null);
+  const hoverIdRef = useRef<string | null>(null);
+  const hoverRAFRef = useRef<number | null>(null);
+
   const projectSig = useMemo(() => {
     const ids = project.drillholes.map((d) => d.id).join("|");
     const coords = project.drillholes
-      .map((d) => `${d.collar.x},${d.collar.y},${d.collar.z},${d.depth}`)
+      .map((d) =>
+        [
+          d.collar.x,
+          d.collar.y,
+          d.collar.z,
+          d.depth,
+          Number.isFinite(d.azimuth as number) ? d.azimuth : 0,
+          Number.isFinite(d.inclination as number) ? d.inclination : -90,
+        ].join(",")
+      )
       .join("|");
     return `${project.version}::${ids}::${coords}`;
   }, [project]);
 
-  // mount once
+  function focusHole(dh: Drillhole) {
+    const cam3D = camera3DRef.current;
+    const cam2D = camera2DRef.current;
+    const c3 = controls3DRef.current;
+    const c2 = controls2DRef.current;
+    const host = hostRef.current;
+
+    if (!cam3D || !cam2D || !c3 || !c2 || !host) return;
+
+    const bounds = computeDrillholeBounds([dh]);
+    if (!bounds) return;
+
+    const aspect = host.clientWidth / host.clientHeight;
+
+    fitPerspectiveToBounds(cam3D, c3, bounds, aspect);
+    fitOrthoToBounds(cam2D, c2, bounds, aspect, orthoHalfHRef);
+
+    camState3DRef.current = cloneState(cam3D.position, c3.target);
+    camState2DRef.current = cloneState(cam2D.position, c2.target, cam2D.zoom);
+  }
+
+  function focusSelected() {
+    const id = selectedIdRef.current;
+    if (!id) return;
+
+    const dh = projectRef.current.drillholes.find((d) => d.id === id);
+    if (!dh) return;
+
+    focusHole(dh);
+  }
+
+  // MOUNT ONCE: setup renderer/scene
   useEffect(() => {
     if (!hostRef.current) return;
 
@@ -190,19 +326,24 @@ export function SceneCanvas(props: Props) {
 
     const scene = new THREE.Scene();
 
-    // lights
     scene.add(new THREE.AmbientLight(0xffffff, 0.75));
     const dir = new THREE.DirectionalLight(0xffffff, 0.9);
     dir.position.set(80, 140, 60);
     scene.add(dir);
 
-    // cameras
     const cam3D = new THREE.PerspectiveCamera(55, host.clientWidth / host.clientHeight, 0.1, 20000);
     cam3D.position.set(40, 30, 40);
 
     const aspect = host.clientWidth / host.clientHeight;
     const halfH = orthoHalfHRef.current;
-    const cam2D = new THREE.OrthographicCamera(-halfH * aspect, halfH * aspect, halfH, -halfH, 0.1, 20000);
+    const cam2D = new THREE.OrthographicCamera(
+      -halfH * aspect,
+      halfH * aspect,
+      halfH,
+      -halfH,
+      0.1,
+      20000
+    );
 
     cam2D.position.set(0, 200, 0);
     cam2D.up.set(0, 0, -1);
@@ -210,7 +351,6 @@ export function SceneCanvas(props: Props) {
     cam2D.zoom = 1;
     cam2D.updateProjectionMatrix();
 
-    // controls
     const controls3D = new OrbitControls(cam3D, renderer.domElement);
     controls3D.enableDamping = true;
     controls3D.dampingFactor = 0.08;
@@ -218,13 +358,12 @@ export function SceneCanvas(props: Props) {
 
     const controls2D = new OrbitControls(cam2D, renderer.domElement);
     controls2D.enableDamping = true;
-    controls2D.dampingFactor = 0.10;
+    controls2D.dampingFactor = 0.1;
     controls2D.enableRotate = false;
     controls2D.enablePan = true;
     controls2D.screenSpacePanning = true;
     controls2D.enableZoom = true;
 
-    // groups
     const drillholes = new THREE.Group();
     drillholes.name = "drillholes";
     scene.add(drillholes);
@@ -250,12 +389,40 @@ export function SceneCanvas(props: Props) {
     gridGroupRef.current = gridGroup;
     terrainGroupRef.current = terrainGroup;
 
-    // default active camera
     activeCameraRef.current = cam3D;
     activeControlsRef.current = controls3D;
 
     camState3DRef.current = cloneState(cam3D.position, controls3D.target);
     camState2DRef.current = cloneState(cam2D.position, controls2D.target, cam2D.zoom);
+
+    // axes overlay (mini renderer)
+    let axesRenderer: THREE.WebGLRenderer | null = null;
+    let axesScene: THREE.Scene | null = null;
+    let axesCam: THREE.PerspectiveCamera | null = null;
+
+    const initAxes = () => {
+      const axesHost = axesHostRef.current;
+      if (!axesHost) return;
+
+      const w = Math.max(1, axesHost.clientWidth);
+      const h = Math.max(1, axesHost.clientHeight);
+
+      axesRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      axesRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      axesRenderer.setSize(w, h);
+      axesRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+      axesHost.appendChild(axesRenderer.domElement);
+
+      axesScene = new THREE.Scene();
+      axesCam = new THREE.PerspectiveCamera(50, w / h, 0.01, 100);
+      axesCam.position.set(2.2, 2.2, 2.2);
+      axesCam.lookAt(0, 0, 0);
+
+      axesScene.add(new THREE.AxesHelper(1.6));
+    };
+
+    initAxes();
 
     const onResize = () => {
       if (!rendererRef.current || !camera3DRef.current || !camera2DRef.current || !hostRef.current) return;
@@ -275,28 +442,82 @@ export function SceneCanvas(props: Props) {
       camera2DRef.current.top = halfH2;
       camera2DRef.current.bottom = -halfH2;
       camera2DRef.current.updateProjectionMatrix();
+
+      const axesHost = axesHostRef.current;
+      if (axesRenderer && axesCam && axesHost) {
+        const aw = Math.max(1, axesHost.clientWidth);
+        const ah = Math.max(1, axesHost.clientHeight);
+        axesRenderer.setSize(aw, ah);
+        axesCam.aspect = aw / ah;
+        axesCam.updateProjectionMatrix();
+      }
     };
 
     window.addEventListener("resize", onResize);
 
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.defaultPrevented) return;
+
+      const t = ev.target as HTMLElement | null;
+      const inTextField =
+        !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || (t as any).isContentEditable);
+      if (inTextField) return;
+
+      if (ev.key === "f" || ev.key === "F") {
+        ev.preventDefault();
+        focusSelected();
+        return;
+      }
+
+      if (ev.key === "1") {
+        ev.preventDefault();
+        setViewRef.current("view3d");
+        return;
+      }
+
+      if (ev.key === "2") {
+        ev.preventDefault();
+        setViewRef.current("plan2d");
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
     const tick = () => {
       rafRef.current = requestAnimationFrame(tick);
+
       activeControlsRef.current?.update();
+
       if (rendererRef.current && sceneRef.current && activeCameraRef.current) {
         rendererRef.current.render(sceneRef.current, activeCameraRef.current);
       }
+
+      if (axesRenderer && axesScene && axesCam && activeCameraRef.current) {
+        axesScene.quaternion.copy(activeCameraRef.current.quaternion);
+        axesRenderer.render(axesScene, axesCam);
+      }
     };
+
     tick();
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("keydown", onKeyDown);
 
       controls3D.dispose();
       controls2D.dispose();
 
+      if (axesRenderer) axesRenderer.dispose();
+
       renderer.dispose();
       host.removeChild(renderer.domElement);
+
+      const axesHost = axesHostRef.current;
+      if (axesHost && axesRenderer?.domElement && axesHost.contains(axesRenderer.domElement)) {
+        axesHost.removeChild(axesRenderer.domElement);
+      }
 
       rendererRef.current = null;
       sceneRef.current = null;
@@ -335,31 +556,10 @@ export function SceneCanvas(props: Props) {
       gridGroup.add(major);
     }
 
-    // if (showTerrain) {
-    //   const geo = new THREE.PlaneGeometry(300, 300, 30, 30);
-    //   geo.rotateX(-Math.PI / 2);
-
-    //   const pos = geo.attributes.position as THREE.BufferAttribute;
-    //   for (let i = 0; i < pos.count; i++) {
-    //     const x = pos.getX(i);
-    //     const z = pos.getZ(i);
-    //     const y = 0.02 * x + 0.01 * z;
-    //     pos.setY(i, y);
-    //   }
-    //   pos.needsUpdate = true;
-    //   geo.computeVertexNormals();
-
-    //   const mat = new THREE.MeshBasicMaterial({
-    //     color: new THREE.Color(tokens.terrainWire),
-    //     wireframe: true,
-    //     transparent: true,
-    //     opacity: tokens.isDark ? 0.35 : 0.25,
-    //   });
-
-    //   const mesh = new THREE.Mesh(geo, mat);
-    //   mesh.userData.nonSelectable = true;
-    //   terrainGroup.add(mesh);
-    // }
+    if (showTerrain) {
+      // placeholder: your existing terrain builder can add meshes here
+      // terrainGroup.add(...)
+    }
 
     project.drillholes.forEach((h) => {
       drillGroup.add(makeDrillholeMesh(h, tokens, h.id === selectedId));
@@ -386,7 +586,7 @@ export function SceneCanvas(props: Props) {
 
     camState3DRef.current = cloneState(cam3D.position, c3.target);
     camState2DRef.current = cloneState(cam2D.position, c2.target, cam2D.zoom);
-  }, [projectSig]);
+  }, [projectSig, project.drillholes]);
 
   // selection highlight
   useEffect(() => {
@@ -396,7 +596,7 @@ export function SceneCanvas(props: Props) {
     drillGroup.children.forEach((obj) => {
       const g = obj as THREE.Group;
       const id = g.userData.id as string | undefined;
-      const selected = id && id === selectedId;
+      const isSelected = id && id === selectedId;
 
       g.traverse((o) => {
         const mesh = o as THREE.Mesh;
@@ -404,19 +604,19 @@ export function SceneCanvas(props: Props) {
 
         if (mesh.userData.kind === "drillhole") {
           const mat = mesh.material as THREE.MeshStandardMaterial;
-          mat.color.set(selected ? tokens.selection : tokens.drillhole);
+          mat.color.set(isSelected ? tokens.selection : tokens.drillhole);
           mat.needsUpdate = true;
         }
         if (mesh.userData.kind === "collar") {
           const mat = mesh.material as THREE.MeshStandardMaterial;
-          mat.color.set(selected ? tokens.selection : tokens.collar);
+          mat.color.set(isSelected ? tokens.selection : tokens.collar);
           mat.needsUpdate = true;
         }
       });
     });
   }, [selectedId, tokens]);
 
-  // View switching (FIXED: uses "view3d"/"plan2d")
+  // view switching
   useEffect(() => {
     const cam3D = camera3DRef.current;
     const cam2D = camera2DRef.current;
@@ -445,7 +645,7 @@ export function SceneCanvas(props: Props) {
     }
   }, [view]);
 
-  // raycast selection: drillholes only; empty click does not clear selection
+  // selection via raycast (no deselect on empty)
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
@@ -462,34 +662,199 @@ export function SceneCanvas(props: Props) {
       const y = -(((ev.clientY - rect.top) / rect.height) * 2 - 1);
       mouseNDCRef.current.set(x, y);
 
-      const raycaster = raycasterRef.current;
-      raycaster.setFromCamera(mouseNDCRef.current, cam);
+      raycasterRef.current.setFromCamera(mouseNDCRef.current, cam);
 
-      const hits = raycaster.intersectObjects(drillGroup.children, true);
+      const hits = raycasterRef.current.intersectObjects(drillGroup.children, true);
       if (hits.length === 0) return;
 
-      let obj: THREE.Object3D | null = hits[0].object;
-      while (obj) {
-        if (obj.userData && obj.userData.id) {
-          onSelect(String(obj.userData.id));
-          return;
-        }
-        obj = obj.parent;
-      }
+      const id = pickIdFromObject(hits[0].object);
+      if (id) onSelect(id);
     };
 
     dom.addEventListener("pointerdown", onPointerDown);
     return () => dom.removeEventListener("pointerdown", onPointerDown);
   }, [onSelect]);
 
+  // hover tooltip
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const tooltip = hoverDivRef.current;
+    if (!renderer || !tooltip) return;
+
+    const dom = renderer.domElement;
+
+    const hide = () => {
+      hoverIdRef.current = null;
+      tooltip.style.display = "none";
+    };
+
+    const buildTooltipHtml = (h: Drillhole) => {
+      const az =
+        typeof h.azimuth === "number" && Number.isFinite(h.azimuth)
+          ? normalizeAzimuthDeg(h.azimuth)
+          : undefined;
+
+      const inc =
+        typeof h.inclination === "number" && Number.isFinite(h.inclination)
+          ? clampInclinationDownDeg(h.inclination)
+          : undefined;
+
+      const collar = `(${fmt(h.collar.x)}, ${fmt(h.collar.y)}, ${fmt(h.collar.z)})`;
+      const intervals = h.intervals?.length ? String(h.intervals.length) : "0";
+
+      return `
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">
+          <div style="font-weight:700;">${h.id}</div>
+          <div style="opacity:0.75;">${fmt(h.depth)} m</div>
+        </div>
+        <div style="margin-top:6px;opacity:0.85;">Collar: ${collar}</div>
+        <div style="margin-top:4px;opacity:0.85;">
+          Az/Inc: ${az === undefined ? "—" : fmtDeg(az)} / ${inc === undefined ? "—" : fmtDeg(inc)}
+        </div>
+        <div style="margin-top:4px;opacity:0.85;">Intervals: ${intervals}</div>
+      `;
+    };
+
+    const onPointerMove = (ev: PointerEvent) => {
+      if (hoverRAFRef.current) return;
+
+      hoverRAFRef.current = requestAnimationFrame(() => {
+        hoverRAFRef.current = null;
+
+        const drillGroup = drillholeGroupRef.current;
+        const cam = activeCameraRef.current;
+        if (!drillGroup || !cam) {
+          hide();
+          return;
+        }
+
+        const rect = dom.getBoundingClientRect();
+        const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+        const ndcY = -(((ev.clientY - rect.top) / rect.height) * 2 - 1);
+        mouseNDCRef.current.set(ndcX, ndcY);
+
+        raycasterRef.current.setFromCamera(mouseNDCRef.current, cam);
+
+        const hits = raycasterRef.current.intersectObjects(drillGroup.children, true);
+        if (hits.length === 0) {
+          hide();
+          return;
+        }
+
+        const id = pickIdFromObject(hits[0].object);
+        if (!id) {
+          hide();
+          return;
+        }
+
+        if (hoverIdRef.current !== id) {
+          hoverIdRef.current = id;
+
+          const hole = project.drillholes.find((d) => d.id === id);
+          if (!hole) {
+            hide();
+            return;
+          }
+
+          tooltip.innerHTML = buildTooltipHtml(hole);
+        }
+
+        tooltip.style.left = `${ev.clientX}px`;
+        tooltip.style.top = `${ev.clientY}px`;
+        tooltip.style.display = "block";
+      });
+    };
+
+    const onPointerLeave = () => hide();
+
+    dom.addEventListener("pointermove", onPointerMove);
+    dom.addEventListener("pointerleave", onPointerLeave);
+
+    return () => {
+      dom.removeEventListener("pointermove", onPointerMove);
+      dom.removeEventListener("pointerleave", onPointerLeave);
+      if (hoverRAFRef.current) cancelAnimationFrame(hoverRAFRef.current);
+      hoverRAFRef.current = null;
+    };
+  }, [project.drillholes]);
+
   return (
-    <div
-      ref={hostRef}
-      style={{
-        position: "absolute",
-        inset: 0,
-      }}
-    />
+    <div ref={wrapperRef} style={{ position: "absolute", inset: 0 }}>
+      <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />
+
+      {/* top-right focus button */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 10,
+          right: 10,
+          display: "flex",
+          gap: 8,
+          pointerEvents: "auto",
+          zIndex: 10,
+        }}
+      >
+        <button
+          type="button"
+          onClick={focusSelected}
+          disabled={!selectedId}
+          style={{
+            fontSize: 12,
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: `1px solid ${tokens.panelBorder}`,
+            background: tokens.isDark ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.75)",
+            color: tokens.text,
+            cursor: selectedId ? "pointer" : "not-allowed",
+          }}
+          title="Focus selected drillhole (F). Switch view: 1=3D, 2=Plan"
+        >
+          Focus (F)
+        </button>
+      </div>
+
+      {/* bottom-left axes */}
+      <div
+        ref={axesHostRef}
+        style={{
+          position: "absolute",
+          left: 12,
+          bottom: 12,
+          width: 110,
+          height: 110,
+          borderRadius: 12,
+          border: `1px solid ${tokens.panelBorder}`,
+          background: tokens.isDark ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.65)",
+          pointerEvents: "none",
+          zIndex: 9,
+          overflow: "hidden",
+        }}
+        title="Axes: X=East, Y=Up, Z=North"
+      />
+
+      {/* hover tooltip */}
+      <div
+        ref={hoverDivRef}
+        style={{
+          position: "absolute",
+          pointerEvents: "none",
+          display: "none",
+          zIndex: 20,
+          padding: "10px 12px",
+          borderRadius: 10,
+          border: `1px solid ${tokens.panelBorder}`,
+          background: tokens.isDark ? "rgba(0,0,0,0.75)" : "rgba(255,255,255,0.92)",
+          color: tokens.text,
+          boxShadow: tokens.isDark ? "0 10px 30px rgba(0,0,0,0.35)" : "0 10px 30px rgba(0,0,0,0.12)",
+          maxWidth: 340,
+          fontSize: 12,
+          lineHeight: 1.35,
+          transform: "translate(12px, 12px)",
+          backdropFilter: "blur(6px)",
+          whiteSpace: "nowrap",
+        }}
+      />
+    </div>
   );
 }
 
@@ -498,9 +863,11 @@ function makeDrillholeMesh(h: Drillhole, tokens: ThemeTokens, selected: boolean)
   g.userData.id = h.id;
 
   const radius = 0.35;
-  const height = Math.max(0.01, h.depth);
+  const depth = Math.max(0.01, h.depth);
 
-  const cylGeo = new THREE.CylinderGeometry(radius, radius, height, 16, 1, false);
+  const dir = drillDirFromAzInc(h);
+
+  const cylGeo = new THREE.CylinderGeometry(radius, radius, depth, 16, 1, false);
   const cylMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(selected ? tokens.selection : tokens.drillhole),
     roughness: 0.8,
@@ -509,7 +876,15 @@ function makeDrillholeMesh(h: Drillhole, tokens: ThemeTokens, selected: boolean)
 
   const cyl = new THREE.Mesh(cylGeo, cylMat);
   cyl.userData.kind = "drillhole";
-  cyl.position.set(h.collar.x, h.collar.y - height / 2, h.collar.z);
+
+  const up = new THREE.Vector3(0, 1, 0);
+  const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
+  cyl.quaternion.copy(q);
+
+  const collarPos = new THREE.Vector3(h.collar.x, h.collar.y, h.collar.z);
+  const center = collarPos.clone().add(dir.clone().multiplyScalar(depth / 2));
+  cyl.position.copy(center);
+
   g.add(cyl);
 
   const sGeo = new THREE.SphereGeometry(radius * 1.2, 16, 16);
@@ -521,7 +896,7 @@ function makeDrillholeMesh(h: Drillhole, tokens: ThemeTokens, selected: boolean)
 
   const collar = new THREE.Mesh(sGeo, sMat);
   collar.userData.kind = "collar";
-  collar.position.set(h.collar.x, h.collar.y, h.collar.z);
+  collar.position.copy(collarPos);
   g.add(collar);
 
   const cGeo = new THREE.CircleGeometry(radius * 1.6, 24);

@@ -15,6 +15,9 @@ export type Drillhole = {
   collar: Vec3;
   depth: number;
   intervals?: Interval[];
+
+  azimuth?: number;      // degrees [0..360)
+  inclination?: number;  // degrees [-90..90]
 };
 
 export type ProjectFile = {

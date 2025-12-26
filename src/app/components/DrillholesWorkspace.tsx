@@ -22,6 +22,16 @@ function formatNum(n: number): string {
   return String(Math.round(n * 1000) / 1000);
 }
 
+function formatDeg(n: number): string {
+  return `${formatNum(n)}°`;
+}
+
+function normalizeAzimuthDeg(a: number): number {
+  // normalize to [0, 360)
+  const r = ((a % 360) + 360) % 360;
+  return Math.abs(r) < 1e-12 ? 0 : r;
+}
+
 function sortDrillholes(holes: Drillhole[], key: SortKey, dir: "asc" | "desc"): Drillhole[] {
   const s = [...holes].sort((a, b) => {
     const av =
@@ -54,7 +64,7 @@ function sortDrillholes(holes: Drillhole[], key: SortKey, dir: "asc" | "desc"): 
 }
 
 function makeEmptyDraft() {
-  return { id: "", depth: "", x: "", y: "", z: "" };
+  return { id: "", depth: "", x: "", y: "", z: "", azimuth: "", inclination: "" };
 }
 
 export function DrillholesWorkspace({
@@ -91,7 +101,8 @@ export function DrillholesWorkspace({
     const q = query.trim().toLowerCase();
     const base = q
       ? state.project.drillholes.filter((d) => {
-          const hay = `${d.id} ${d.depth} ${d.collar.x} ${d.collar.y} ${d.collar.z}`.toLowerCase();
+          const hay =
+            `${d.id} ${d.depth} ${d.collar.x} ${d.collar.y} ${d.collar.z} ${d.azimuth ?? ""} ${d.inclination ?? ""}`.toLowerCase();
           return hay.includes(q);
         })
       : state.project.drillholes;
@@ -128,6 +139,8 @@ export function DrillholesWorkspace({
       x: formatNum(dh.collar.x),
       y: formatNum(dh.collar.y),
       z: formatNum(dh.collar.z),
+      azimuth: dh.azimuth === undefined ? "" : formatNum(dh.azimuth),
+      inclination: dh.inclination === undefined ? "" : formatNum(dh.inclination),
     });
     setFormError(null);
   }
@@ -147,6 +160,33 @@ export function DrillholesWorkspace({
       return { ok: false as const, error: "Collar coordinates X/Y/Z must be valid finite numbers." };
     }
 
+    // orientation (optional)
+    let azimuth: number | undefined = undefined;
+    if (draft.azimuth.trim() !== "") {
+      const a = parseNumberStrict(draft.azimuth);
+      if (a === null) return { ok: false as const, error: "Azimuth must be a valid finite number (or blank)." };
+      azimuth = normalizeAzimuthDeg(a);
+    }
+
+    let inclination: number | undefined = undefined;
+    if (draft.inclination.trim() !== "") {
+      const inc = parseNumberStrict(draft.inclination);
+      if (inc === null) {
+        return { ok: false as const, error: "Inclination must be a valid finite number (or blank)." };
+      }
+
+      // UPDATED: accept ONLY negative inclinations, clamped range [-180, 0]
+      if (inc > 0) {
+        return { ok: false as const, error: "Inclination must be ≤ 0 (downward only)." };
+      }
+      
+      if (inc < -90) {
+        return { ok: false as const, error: "Inclination must be ≥ -90 degrees." };
+      }
+
+      inclination = inc;
+    }
+
     const exists = state.project.drillholes.some((d) => d.id === id);
     if (opts.kind === "create" && exists) {
       return { ok: false as const, error: `A drillhole with ID "${id}" already exists.` };
@@ -156,7 +196,7 @@ export function DrillholesWorkspace({
     }
 
     const collar: Vec3 = { x: xN, y: yN, z: zN };
-    const hole: Drillhole = { id, depth: depthN, collar };
+    const hole: Drillhole = { id, depth: depthN, collar, azimuth, inclination };
     return { ok: true as const, value: hole };
   }
 
@@ -190,8 +230,10 @@ export function DrillholesWorkspace({
     }));
 
     setDraft(makeEmptyDraft());
-    // sensible defaults (engineering)
-    setDraft((d) => ({ ...d, depth: "50", x: "0", y: "0", z: "0" }));
+
+    // UPDATED defaults: azimuth 0, inclination -90 (vertical down)
+    setDraft((d) => ({ ...d, depth: "50", x: "0", y: "0", z: "0", azimuth: "0", inclination: "-90" }));
+
     setFormError(null);
     setMode("create");
   }
@@ -253,6 +295,11 @@ export function DrillholesWorkspace({
           id: res.value.id,
           depth: res.value.depth,
           collar: res.value.collar,
+
+          // persist orientation
+          azimuth: res.value.azimuth,
+          inclination: res.value.inclination,
+
           // preserve intervals if any
           intervals: d.intervals,
         };
@@ -335,6 +382,14 @@ export function DrillholesWorkspace({
                 }
                 tokens={tokens}
               />
+
+              <InfoRow label="Azimuth" value={selected?.azimuth === undefined ? "—" : formatDeg(selected.azimuth)} tokens={tokens} />
+              <InfoRow
+                label="Inclination"
+                value={selected?.inclination === undefined ? "—" : formatDeg(selected.inclination)}
+                tokens={tokens}
+              />
+
               <InfoRow
                 label="Intervals"
                 value={selected?.intervals?.length ? String(selected.intervals.length) : "0"}
@@ -355,8 +410,7 @@ export function DrillholesWorkspace({
           <Card style={{ padding: 16 }}>
             <Text weight="bold">Engineering notes</Text>
             <Text size="2" style={{ color: tokens.mutedText, marginTop: 6 }}>
-              This view is read-only by default. Use Edit to change collar/depth. Delete requires confirmation and
-              removes intervals safely.
+              Orientation is stored as azimuth (0–360°, normalized) and inclination (0..-90°, downward only). Inclination conventions: 0 = horizontal, -90 = vertical down.
             </Text>
           </Card>
         </div>
@@ -371,7 +425,7 @@ export function DrillholesWorkspace({
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
             <Text weight="bold">{isCreate ? "Create drillhole" : "Edit drillhole"}</Text>
             <Text size="2" style={{ color: tokens.mutedText }}>
-              Units: m
+              Units: m / degrees
             </Text>
           </div>
 
@@ -428,6 +482,31 @@ export function DrillholesWorkspace({
               </div>
             </div>
 
+            {/* orientation fields */}
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <Text size="2" style={{ color: tokens.mutedText }}>
+                  Azimuth (deg, 0–360)
+                </Text>
+                <TextField.Root
+                  value={draft.azimuth}
+                  placeholder="0"
+                  onChange={(e) => setDraftField("azimuth", (e.target as HTMLInputElement).value)}
+                />
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <Text size="2" style={{ color: tokens.mutedText }}>
+                  Inclination (deg, 0 to -90)
+                </Text>
+                <TextField.Root
+                  value={draft.inclination}
+                  placeholder="-90"
+                  onChange={(e) => setDraftField("inclination", (e.target as HTMLInputElement).value)}
+                />
+              </div>
+            </div>
+
             {formError ? (
               <Card
                 style={{
@@ -473,7 +552,7 @@ export function DrillholesWorkspace({
 
             {!isCreate && selected ? (
               <Text size="2" style={{ color: tokens.mutedText }}>
-                Editing preserves intervals; only ID/collar/depth are changed here.
+                Editing preserves intervals; only ID/collar/depth/azimuth/inclination are changed here.
               </Text>
             ) : null}
           </div>
@@ -496,7 +575,7 @@ export function DrillholesWorkspace({
 
           <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
             <TextField.Root
-              placeholder="Search (ID, depth, collar)…"
+              placeholder="Search (ID, depth, collar, azimuth, inclination)…"
               value={query}
               onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
             />
@@ -547,8 +626,14 @@ export function DrillholesWorkspace({
                         {formatNum(d.depth)} m
                       </Text>
                     </div>
+
                     <Text size="2" style={{ color: tokens.mutedText }}>
                       Collar: ({formatNum(d.collar.x)}, {formatNum(d.collar.y)}, {formatNum(d.collar.z)})
+                    </Text>
+
+                    <Text size="2" style={{ color: tokens.mutedText }}>
+                      Az/Inc: {d.azimuth === undefined ? "—" : formatDeg(d.azimuth)} /{" "}
+                      {d.inclination === undefined ? "—" : formatDeg(d.inclination)}
                     </Text>
                   </button>
                 );
@@ -559,9 +644,7 @@ export function DrillholesWorkspace({
       </Card>
 
       {/* Right: mode-driven */}
-      <div style={{ height: "100%", minHeight: 0, overflow: "auto" }}>
-        {rightPanel}
-      </div>
+      <div style={{ height: "100%", minHeight: 0, overflow: "auto" }}>{rightPanel}</div>
 
       {/* Delete confirmation */}
       <Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
