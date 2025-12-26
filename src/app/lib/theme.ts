@@ -58,10 +58,10 @@ export function getThemeTokens(mode: ThemeMode): ThemeTokens {
     gridMinor: "rgba(209, 208, 208, 0)",
     terrainWire: "rgba(120, 30, 30, 0.9)",
 
-    drillhole: "rgba(30,60,120,0.42)",
-    drillholeSelected: "rgba(42,109,240,0.95)",
-    collar: "rgba(10,10,12,0.45)",
-    collarSelected: "rgba(42,109,240,0.95)",
+    drillhole: "rgb(172, 172, 172)",
+    drillholeSelected: "rgb(0, 0, 0)",
+    collar: "rgb(172, 172, 172)",
+    collarSelected: "rgb(0, 0, 0)",
 
     isDark: false
 
