@@ -13,6 +13,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@radix-ui/themes": "^3.2.1",
     "@sparticuz/chromium": "^143.0.0",
+    "@vercel/analytics": "^1.6.1",
     "next": "16.0.10",
     "puppeteer": "^24.34.0",
     "puppeteer-core": "^24.34.0",
