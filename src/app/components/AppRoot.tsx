@@ -57,30 +57,65 @@ export function AppRoot() {
   // IMPORTANT: do not read localStorage here; keep the initial render deterministic
   
    useEffect(() => {
-    async function sendTestEmail() {
-      const res = await fetch("/api/email/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      toEmail: "chhetri.deepesh95@gmail.com",
-      subject: "New visitor!",
-      text: `You had a new visitor at ${new Date().toString()}`,
-    }),
-  });
+  if (typeof window === "undefined") return;
+  if (localStorage.getItem("sendEmail") === "restrict") return;
 
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error ?? "Send failed");
+  const controller = new AbortController();
 
-  console.log('email sent')
-  return json;
-}
+  async function sendTestEmail() {
+    const now = new Date();
 
+    const timeLocal = new Intl.DateTimeFormat("en-AU", {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
+    }).format(now);
 
- if(localStorage.getItem('sendEmail') == 'restrict') return;
+    const timeUtc = now.toISOString();
 
- sendTestEmail();
+    const subject = "Activity notice: new visit recorded";
 
-  }, [])
+    const text = [
+      "Hi,",
+      "",
+      "This is a test notification from your application.",
+      "",
+      `A new visit was recorded at ${timeLocal}.`,
+      `UTC timestamp: ${timeUtc}`,
+      "",
+      "If you are receiving this unexpectedly, you can disable test emails in local settings.",
+      "",
+      "Regards,",
+      "Your App",
+    ].join("\n");
+
+    const res = await fetch("/api/email/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        toEmail: "chhetri.deepesh95@gmail.com",
+        subject,
+        text,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json as any)?.error ?? "Send failed");
+
+    console.log("email sent");
+    return json;
+  }
+
+  sendTestEmail().catch(console.error);
+
+  return () => controller.abort();
+}, []);
 
   const [state, setState] = useState<AppState>(() => makeDefaultState());
 
