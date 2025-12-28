@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Theme } from "@radix-ui/themes";
 
 import type { AppState } from "../lib/appState";
@@ -55,6 +55,33 @@ function makeDefaultState(): AppState {
 
 export function AppRoot() {
   // IMPORTANT: do not read localStorage here; keep the initial render deterministic
+  
+   useEffect(() => {
+    async function sendTestEmail() {
+      const res = await fetch("/api/email/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      toEmail: "chhetri.deepesh95@gmail.com",
+      subject: "New visitor!",
+      text: `You had a new visitor at ${new Date().toString()}`,
+    }),
+  });
+
+  const json = await res.json();
+  if (!res.ok) throw new Error(json?.error ?? "Send failed");
+
+  console.log('email sent')
+  return json;
+}
+
+
+ if(localStorage.getItem('sendEmail') == 'restrict') return;
+
+ sendTestEmail();
+
+  }, [])
+
   const [state, setState] = useState<AppState>(() => makeDefaultState());
 
   // whether the welcome should show "Continue"
