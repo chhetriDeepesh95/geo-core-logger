@@ -1,6 +1,7 @@
 import "@radix-ui/themes/styles.css";
 import type { Metadata } from "next";
 import React from "react";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "Geotechnical Core Logging",
@@ -12,6 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body style={{ margin: 0, height: "100vh", overflow: "hidden" }}>
         {children}
+        <Analytics />
       </body>
     </html>
   );
